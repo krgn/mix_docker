@@ -35,7 +35,7 @@ defmodule MixDocker do
       docker :create, cid, image(:build)
       docker :cp, cid, "/opt/app/_build/prod/rel/#{app}/releases/#{version}/#{app}.tar.gz", "#{app}.tar.gz"
       docker :rm, cid
-      docker :build, @dockerfile_release, image(:release), args
+      docker :build, @dockerfile_release, image(:release), to_string(app), args
     end
 
     Mix.shell.info "Docker image #{image(:release)} has been successfully created"
@@ -116,13 +116,16 @@ defmodule MixDocker do
   defp extract_opts(head, [], opts), do: {opts, head}
   defp extract_opts(head, [h | tail], opts), do: extract_opts(head ++ [h], tail, opts)
 
-
   defp docker(:cp, cid, source, dest) do
     system! "docker", ["cp", "#{cid}:#{source}", dest]
   end
 
   defp docker(:build, dockerfile, tag, args) do
     system! "docker", ["build", "-f", dockerfile, "-t", tag] ++ args ++ ["."]
+  end
+
+  defp docker(:build, dockerfile, tag, app, args) do
+    system! "docker", ["build", "-f", dockerfile, "-t", tag, "--build-arg", "app_name=" <> app] ++ args ++ ["."]
   end
 
   defp docker(:create, name, image) do

@@ -5,8 +5,12 @@ RUN apk update && \
     rm -rf /var/cache/apk/*
 
 EXPOSE 4000
-ENV PORT=4000 MIX_ENV=prod REPLACE_OS_VARS=true SHELL=/bin/sh
 
-ADD api.tar.gz ./
+ARG app_name
+ENV APP=${app_name} PORT=4000 MIX_ENV=prod REPLACE_OS_VARS=true SHELL=/bin/sh
 
-ENTRYPOINT ["/bin/api"]
+RUN mkdir -p /app
+ADD $APP.tar.gz /app
+RUN ln -s /app/bin/$APP /app/bin/elixir-application
+
+ENTRYPOINT ["/app/bin/elixir-application"]
