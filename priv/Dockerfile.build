@@ -5,6 +5,8 @@ ENV HOME=/opt/app/ TERM=xterm
 RUN apk update
 RUN apk --no-cache --update add git 
 
+ENV REPLACE_OS_VARS=true
+
 # Install Hex+Rebar
 RUN mix local.hex --force && \
     mix local.rebar --force
