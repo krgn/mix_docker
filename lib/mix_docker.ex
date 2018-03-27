@@ -1,9 +1,13 @@
 defmodule MixDocker do
   require Logger
 
-  @dockerfile_path    :code.priv_dir(:mix_docker)
-  @dockerfile_build   Application.get_env(:mix_docker, :dockerfile_build, "Dockerfile.build")
+  @dockerfile_path :code.priv_dir(:mix_docker)
+  @dockerfile_build Application.get_env(:mix_docker, :dockerfile_build, "Dockerfile.build")
   @dockerfile_release Application.get_env(:mix_docker, :dockerfile_release, "Dockerfile.release")
+  @docker_registry_uri Application.get_env(:mix_docker, :registry_uri, nil)
+  @docker_aws_region Application.get_env(:mix_docker, :aws_region, nil)
+  @docker_aws_profile Application.get_env(:mix_docker, :aws_profile, "default")
+  @docker_registry_server_url Application.get_env(:mix_docker, :registry_server_url, "")
 
   @default_tag_template "{mix-version}.{git-count}-{git-sha}"
 
@@ -17,43 +21,95 @@ defmodule MixDocker do
   end
 
   def build(args) do
-    with_dockerfile @dockerfile_build, fn ->
-      docker :build, @dockerfile_build, image(:build), args
-    end
+    with_dockerfile(@dockerfile_build, fn ->
+      docker(:build, @dockerfile_build, image(:build), args)
+    end)
 
-    Mix.shell.info "Docker image #{image(:build)} has been successfully created"
+    Mix.shell().info("Docker image #{image(:build)} has been successfully created")
   end
 
   def release(args) do
-    app     = app_name()
+    app = app_name()
     version = app_version() || release_version()
 
-    cid = "mix_docker-#{:rand.uniform(1000000)}"
+    cid = "mix_docker-#{:rand.uniform(1_000_000)}"
 
-    with_dockerfile @dockerfile_release, fn ->
-      docker :rm, cid
-      docker :create, cid, image(:build)
-      docker :cp, cid, "/opt/app/_build/prod/rel/#{app}/releases/#{version}/#{app}.tar.gz", "#{app}.tar.gz"
-      docker :rm, cid
-      docker :build, @dockerfile_release, image(:release), to_string(app), args
-    end
+    with_dockerfile(@dockerfile_release, fn ->
+      docker(:rm, cid)
+      docker(:create, cid, image(:build))
 
-    Mix.shell.info "Docker image #{image(:release)} has been successfully created"
-    Mix.shell.info "You can now test your app with the following command:"
-    Mix.shell.info "  docker run -it --rm #{image(:release)} foreground"
+      docker(
+        :cp,
+        cid,
+        "/opt/app/_build/prod/rel/#{app}/releases/#{version}/#{app}.tar.gz",
+        "#{app}.tar.gz"
+      )
+
+      docker(:rm, cid)
+      docker(:build, @dockerfile_release, image(:release), to_string(app), args)
+    end)
+
+    Mix.shell().info("Docker image #{image(:release)} has been successfully created")
+    Mix.shell().info("You can now test your app with the following command:")
+    Mix.shell().info("  docker run -it --rm #{image(:release)} foreground")
   end
 
   def publish(args) do
     {opts, args} = extract_opts(args)
     publish(args, opts)
   end
+
   def publish(args, opts) do
-    name = image(make_image_tag(opts[:tag]))
+    tag = make_image_tag(opts[:tag])
+    name = image(tag)
 
-    docker :tag, image(:release), name
-    docker :push, name, args
+    docker(:tag, image(:release), name)
 
-    Mix.shell.info "Docker image #{name} has been successfully created"
+    # tag it with the repository:tag as well for the aws registry
+    case @docker_registry_uri do
+      nil -> nil
+      uri -> docker(:tag, image(:release), uri <> ":" <> tag)
+    end
+
+    case @docker_aws_region do
+      nil ->
+        docker(:push, name, args)
+
+      _ ->
+        # if we have an aws registry, do the aws dance
+        # first, get the auth token / password we have to use to log into docker
+        {auth_token, 0} =
+          System.cmd("aws", [
+            "ecr",
+            "get-authorization-token",
+            "--profile",
+            @docker_aws_profile,
+            "--region",
+            @docker_aws_region,
+            "--output",
+            "text",
+            "--query",
+            "authorizationData[].authorizationToken"
+          ])
+
+        auth_token = String.trim(auth_token)
+        {:ok, auth_token} = Base.decode64(auth_token)
+        auth_token = String.slice(auth_token, 4..-1)
+
+        {_, 0} =
+          System.cmd("docker", [
+            "login",
+            "-u",
+            "AWS",
+            "-p",
+            auth_token,
+            @docker_registry_server_url
+          ])
+
+        docker(:push, @docker_registry_uri, args)
+    end
+
+    Mix.shell().info("Docker image #{name} has been successfully created")
   end
 
   def shipit(args) do
@@ -65,8 +121,8 @@ defmodule MixDocker do
   end
 
   def customize([]) do
-    try_copy_dockerfile @dockerfile_build
-    try_copy_dockerfile @dockerfile_release
+    try_copy_dockerfile(@dockerfile_build)
+    try_copy_dockerfile(@dockerfile_release)
   end
 
   defp image(tag) do
@@ -91,6 +147,7 @@ defmodule MixDocker do
   end
 
   defp tagvar("git-sha"), do: tagvar("git-sha10")
+
   defp tagvar("git-sha" <> length) do
     {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"])
     String.slice(sha, 0, String.to_integer(length))
@@ -98,7 +155,7 @@ defmodule MixDocker do
 
   defp tagvar("git-branch") do
     {branch, 0} = System.cmd("git", ["rev-parse", "--abbrev-ref", "HEAD"])
-    String.trim(branch)
+    String.trim(branch) |> String.downcase() |> String.replace(~r/[^a-z0-9]/, "-")
   end
 
   defp tagvar("git-count") do
@@ -112,36 +169,42 @@ defmodule MixDocker do
 
   # Simple recursive extraction instead of OptionParser to keep other (docker) flags intact
   defp extract_opts(args), do: extract_opts([], args, [])
-  defp extract_opts(head, ["--tag", tag | tail], opts), do: extract_opts(head, tail, Keyword.put(opts, :tag, tag))
+
+  defp extract_opts(head, ["--tag", tag | tail], opts),
+    do: extract_opts(head, tail, Keyword.put(opts, :tag, tag))
+
   defp extract_opts(head, [], opts), do: {opts, head}
   defp extract_opts(head, [h | tail], opts), do: extract_opts(head ++ [h], tail, opts)
 
   defp docker(:cp, cid, source, dest) do
-    system! "docker", ["cp", "#{cid}:#{source}", dest]
+    system!("docker", ["cp", "#{cid}:#{source}", dest])
   end
 
   defp docker(:build, dockerfile, tag, args) do
-    system! "docker", ["build", "-f", dockerfile, "-t", tag] ++ args ++ ["."]
+    system!("docker", ["build", "-f", dockerfile, "-t", tag] ++ args ++ ["."])
   end
 
   defp docker(:build, dockerfile, tag, app, args) do
-    system! "docker", ["build", "-f", dockerfile, "-t", tag, "--build-arg", "app_name=" <> app] ++ args ++ ["."]
+    system!(
+      "docker",
+      ["build", "-f", dockerfile, "-t", tag, "--build-arg", "app_name=" <> app] ++ args ++ ["."]
+    )
   end
 
   defp docker(:create, name, image) do
-    system! "docker", ["create", "--name", name, image]
+    system!("docker", ["create", "--name", name, image])
   end
 
   defp docker(:tag, image, tag) do
-    system! "docker", ["tag", image, tag]
+    system!("docker", ["tag", image, tag])
   end
 
   defp docker(:push, image, args) do
-    system! "docker", ["push"] ++ args ++ [image]
+    system!("docker", ["push"] ++ args ++ [image])
   end
 
   defp docker(:rm, cid) do
-    system "docker", ["rm", "-f", cid]
+    system("docker", ["rm", "-f", cid])
   end
 
   defp with_dockerfile(name, fun) do
@@ -159,10 +222,13 @@ defmodule MixDocker do
 
   defp copy_dockerfile(name) do
     app = app_name()
-    content = [@dockerfile_path, name]
-      |> Path.join
-      |> File.read!
+
+    content =
+      [@dockerfile_path, name]
+      |> Path.join()
+      |> File.read!()
       |> String.replace("${APP}", to_string(app))
+
     File.write!(name, content)
   end
 
@@ -175,7 +241,7 @@ defmodule MixDocker do
   end
 
   defp system(cmd, args) do
-    Logger.debug "$ #{cmd} #{args |> Enum.join(" ")}"
+    Logger.debug("$ #{cmd} #{args |> Enum.join(" ")}")
     System.cmd(cmd, args, into: IO.stream(:stdio, :line))
   end
 
@@ -184,12 +250,12 @@ defmodule MixDocker do
   end
 
   defp app_name do
-    release_name_from_cwd = File.cwd! |> Path.basename |> String.replace("-", "_")
-    Mix.Project.get.project[:app] || release_name_from_cwd
+    release_name_from_cwd = File.cwd!() |> Path.basename() |> String.replace("-", "_")
+    Mix.Project.get().project[:app] || release_name_from_cwd
   end
 
   defp app_version do
-    Mix.Project.get.project[:version]
+    Mix.Project.get().project[:version]
   end
 
   defp release_version do

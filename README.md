@@ -169,6 +169,19 @@ COPY apps/my_second_app/config/* apps/my_second_app/config/
 # etc.
 ```
 
+#### Working with an AWS docker registry
+
+For pushing into an AWS registry, first create the registry and make note of the URLs AWS gives back n creation.
+In the config for mix_docker, add these keys:
+```
+registry_uri: "xxxxxxxx.dkr.ecr.us-east-1.amazonaws.com/cdn-routing-api",
+registry_server_url: "https://xxxxxxxx.dkr.ecr.us-east-1.amazonaws.com",
+aws_region: "us-east-1",
+aws_profile: "default"
+```
+
+The `mix docker.publish` task will tag the image with the `registry_uri:tag` value, perform the `docker login` command
+and finally push the image to the registry. 
 
 #### How to configure a Phoenix app?
 
