@@ -185,9 +185,15 @@ defmodule MixDocker do
   end
 
   defp docker(:build, dockerfile, tag, app, args) do
+    version = app_version() || release_version()
     system!(
       "docker",
-      ["build", "-f", dockerfile, "-t", tag, "--build-arg", "app_name=" <> app] ++ args ++ ["."]
+      ["build",
+       "-f", dockerfile,
+       "-t", tag,
+       "--build-arg", "app_name=" <> app,
+       "--build-arg", "app_version=" <> version
+      ] ++ args ++ ["."]
     )
   end
 
