@@ -181,7 +181,7 @@ defmodule MixDocker do
   end
 
   defp docker(:build, dockerfile, tag, args) do
-    system!("docker", ["build", "-f", dockerfile, "-t", tag] ++ args ++ ["."])
+    system!("docker", ["build", "--rm", "-f", dockerfile, "-t", tag] ++ args ++ ["."])
   end
 
   defp docker(:build, dockerfile, tag, app, args) do
@@ -191,6 +191,7 @@ defmodule MixDocker do
       ["build",
        "-f", dockerfile,
        "-t", tag,
+       "--rm",
        "--build-arg", "app_name=" <> app,
        "--build-arg", "app_version=" <> version
       ] ++ args ++ ["."]
