@@ -43,6 +43,22 @@ defmodule Mix.Tasks.Docker.Build do
   defdelegate run(args), to: MixDocker, as: :build
 end
 
+defmodule Mix.Tasks.Docker.Cleanup do
+  use Mix.Task
+
+  @shortdoc "Cleanup docker images"
+  @preferred_cli_env :prod
+  @moduledoc """
+  Cleans up docker images previously build.
+
+  ## Examples
+
+      mix docker.cleanup
+  """
+
+  defdelegate run(args), to: MixDocker, as: :cleanup
+end
+
 defmodule Mix.Tasks.Docker.Release do
   use Mix.Task
 

@@ -50,7 +50,6 @@ defmodule MixDockerTest do
         assert File.exists?("rel/config.exs")
 
         mix "docker.build"
-
         mix "docker.release"
       end
     end
@@ -66,7 +65,27 @@ defmodule MixDockerTest do
     end
   end
 
+  describe "cleanup" do
+    setup [:cleanup]
 
+    @tag dir: @single
+    test "image removal", %{dir: dir} do
+      mix "docker.init"
+      mix "docker.build"
+      mix "docker.release"
+      {tag, name} = MixDocker.tag([], [])
+
+      {hash, result} = System.cmd("docker", ["images", "-f", "reference=" <> name, "-q"])
+      assert(String.length(hash) > 0)
+      assert(result == 0)
+
+      mix "docker.cleanup"
+
+      {hash, result} = System.cmd("docker", ["images", "-f", "reference=" <> name, "-q"])
+      assert(String.length(hash) == 0)
+      assert(result == 0)
+    end
+  end
 
   @tag dir: @umbrella
   describe "umbrella" do

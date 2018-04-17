@@ -54,16 +54,20 @@ defmodule MixDocker do
     Mix.shell().info("  docker run -it --rm #{image(:release)} foreground")
   end
 
+  def tag(_args, opts) do
+    tag = make_image_tag(opts[:tag])
+    name = image(tag)
+    docker(:tag, image(:release), name)
+    {tag, name}
+  end
+
   def publish(args) do
     {opts, args} = extract_opts(args)
     publish(args, opts)
   end
 
   def publish(args, opts) do
-    tag = make_image_tag(opts[:tag])
-    name = image(tag)
-
-    docker(:tag, image(:release), name)
+    {tag, name} = tag(args, opts)
 
     # tag it with the repository:tag as well for the aws registry
     case @docker_registry_uri do
@@ -74,42 +78,28 @@ defmodule MixDocker do
     case @docker_aws_region do
       nil ->
         docker(:push, name, args)
-
       _ ->
-        # if we have an aws registry, do the aws dance
-        # first, get the auth token / password we have to use to log into docker
-        {auth_token, 0} =
-          System.cmd("aws", [
-            "ecr",
-            "get-authorization-token",
-            "--profile",
-            @docker_aws_profile,
-            "--region",
-            @docker_aws_region,
-            "--output",
-            "text",
-            "--query",
-            "authorizationData[].authorizationToken"
-          ])
-
-        auth_token = String.trim(auth_token)
-        {:ok, auth_token} = Base.decode64(auth_token)
-        auth_token = String.slice(auth_token, 4..-1)
-
-        {_, 0} =
-          System.cmd("docker", [
-            "login",
-            "-u",
-            "AWS",
-            "-p",
-            auth_token,
-            @docker_registry_server_url
-          ])
-
+        docker(:login)
         docker(:push, @docker_registry_uri, args)
     end
 
     Mix.shell().info("Docker image #{name} has been successfully created")
+  end
+
+  def cleanup(opts) do
+    tagged =
+      opts[:tag]
+      |> make_image_tag()
+      |> image()
+    name = to_string(app_name())
+    images = [
+      tagged,
+      name <> ":" <> "build",
+      name <> ":" <> "release"
+    ]
+    Enum.each(images, fn image ->
+      docker(:rmi, image)
+    end)
   end
 
   def shipit(args) do
@@ -180,6 +170,34 @@ defmodule MixDocker do
     system!("docker", ["cp", "#{cid}:#{source}", dest])
   end
 
+  defp docker(:login) do
+    # if we have an aws registry, do the aws dance
+    # first, get the auth token / password we have to use to log into docker
+    {auth_token, 0} =
+      System.cmd("aws", [
+            "ecr",
+            "get-authorization-token",
+            "--profile",
+            @docker_aws_profile,
+            "--region",
+            @docker_aws_region,
+            "--output",
+            "text",
+            "--query",
+            "authorizationData[].authorizationToken"
+          ])
+
+    auth_token = String.trim(auth_token)
+    {:ok, auth_token} = Base.decode64(auth_token)
+    auth_token = String.slice(auth_token, 4..-1)
+
+    system!("docker", ["login", "-u", "AWS", "-p", auth_token, @docker_registry_server_url])
+  end
+
+  defp docker(:rmi, name) do
+    system!("docker", ["rmi", name])
+  end
+
   defp docker(:build, dockerfile, tag, args) do
     system!("docker", ["build", "--rm", "-f", dockerfile, "-t", tag] ++ args ++ ["."])
   end
@@ -211,7 +229,7 @@ defmodule MixDocker do
   end
 
   defp docker(:rm, cid) do
-    system("docker", ["rm", "-f", cid])
+    system!("docker", ["rm", "-f", cid])
   end
 
   defp with_dockerfile(name, fun) do
@@ -247,13 +265,9 @@ defmodule MixDocker do
     end
   end
 
-  defp system(cmd, args) do
+  defp system!(cmd, args) do
     Logger.debug("$ #{cmd} #{args |> Enum.join(" ")}")
     System.cmd(cmd, args, into: IO.stream(:stdio, :line))
-  end
-
-  defp system!(cmd, args) do
-    {_, 0} = system(cmd, args)
   end
 
   defp app_name do
