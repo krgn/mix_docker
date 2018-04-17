@@ -91,11 +91,10 @@ defmodule MixDocker do
       opts[:tag]
       |> make_image_tag()
       |> image()
-    name = to_string(app_name())
     images = [
       tagged,
-      name <> ":" <> "build",
-      name <> ":" <> "release"
+      image(:build),
+      image(:release)
     ]
     Enum.each(images, fn image ->
       docker(:rmi, image)
