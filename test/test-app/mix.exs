@@ -4,7 +4,7 @@ defmodule App.Mixfile do
   def project do
     [app: :app,
      version: "0.1.0",
-     elixir: "~> 1.3",
+     elixir: "~> 1.7",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
      deps: deps()]
@@ -17,7 +17,7 @@ defmodule App.Mixfile do
   defp deps do
     [
       {:mix_docker, path: "vendor/mix_docker"},
-      {:distillery, "~> 1.2"}
+      {:distillery, "~> 2.0"}
     ]
   end
 end

@@ -23,7 +23,7 @@ defmodule Umb.Mixfile do
   defp deps do
     [
       {:mix_docker, path: "vendor/mix_docker"},
-      {:distillery, "~> 1.2"}
+      {:distillery, "~> 2.0"}
     ]
   end
 end
